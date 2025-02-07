@@ -1,0 +1,89 @@
+from tkinter import *
+from tkinter import ttk
+from jira import JIRA
+
+def create_jira_ticket():
+    # Jira Configuration
+    JIRA_URL = "https://your-jira-instance.atlassian.net"
+    JIRA_EMAIL = "your.email@example.com"
+    JIRA_API_TOKEN = "your_api_token"
+
+    # Get user inputs
+    project = project_var.get()
+    issue_type = issue_type_var.get()
+    component = component_var.get()
+    time_spent = f"{time_var.get()}h"
+    summary = summary_entry.get()
+    description = desc_entry.get("1.0", END)
+
+    try:
+        # Connect to Jira
+        jira = JIRA(
+            server=JIRA_URL,
+            basic_auth=(JIRA_EMAIL, JIRA_API_TOKEN)
+        )
+
+        # Create issue
+        issue_dict = {
+            'project': {'key': project},
+            'issuetype': {'name': issue_type},
+            'summary': summary,
+            'description': description,
+            'components': [{'name': component}]
+        }
+        new_issue = jira.create_issue(fields=issue_dict)
+        
+        # Add worklog
+        jira.add_worklog(new_issue, timeSpent=time_spent, comment="Troubleshooting time log")
+        
+        result_label.config(text=f"Ticket created successfully: {new_issue.key}", fg="green")
+    except Exception as e:
+        result_label.config(text=f"Error creating ticket: {str(e)}", fg="red")
+
+# Create main window
+root = Tk()
+root.title("Jira Time Logger")
+root.geometry("500x500")
+
+# Dropdown options
+projects = ["PROJ1", "PROJ2", "PROJ3"]
+issue_types = ["Task", "Bug", "Story"]
+components = ["Frontend", "Backend", "Database"]
+time_options = [str(i) for i in range(1, 9)]  # 1-8 hours
+
+# Create form elements
+Label(root, text="Project:").pack()
+project_var = StringVar()
+project_dropdown = ttk.Combobox(root, textvariable=project_var, values=projects)
+project_dropdown.pack()
+
+Label(root, text="Issue Type:").pack()
+issue_type_var = StringVar()
+issue_type_dropdown = ttk.Combobox(root, textvariable=issue_type_var, values=issue_types)
+issue_type_dropdown.pack()
+
+Label(root, text="Component:").pack()
+component_var = StringVar()
+component_dropdown = ttk.Combobox(root, textvariable=component_var, values=components)
+component_dropdown.pack()
+
+Label(root, text="Time Spent (hours):").pack()
+time_var = StringVar()
+time_dropdown = ttk.Combobox(root, textvariable=time_var, values=time_options)
+time_dropdown.pack()
+
+Label(root, text="Summary:").pack()
+summary_entry = Entry(root, width=50)
+summary_entry.pack()
+
+Label(root, text="Description:").pack()
+desc_entry = Text(root, width=50, height=10)
+desc_entry.pack()
+
+submit_btn = Button(root, text="Create Ticket", command=create_jira_ticket)
+submit_btn.pack(pady=10)
+
+result_label = Label(root, text="")
+result_label.pack()
+
+root.mainloop()
