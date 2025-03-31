@@ -1,0 +1,4 @@
+{
+  "xlr_url": "https://your-company-xlr.example.com",
+  "ansible_url": "https://your-company-ansible-tower.example.com"
+}

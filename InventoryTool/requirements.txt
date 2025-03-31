@@ -1,0 +1,7 @@
+flask
+flask-sqlalchemy
+openpyxl
+requests
+gunicorn
+psycopg2-binary
+email-validator

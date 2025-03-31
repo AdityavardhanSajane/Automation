@@ -1,0 +1,158 @@
+/* Custom styles for Server Inventory Tool */
+
+/* Log box styling */
+.log-box {
+    height: 200px;
+    overflow-y: auto;
+    background-color: var(--bs-dark);
+    color: var(--bs-light);
+    padding: 10px;
+    border-radius: 5px;
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+.log-box .log-entry {
+    margin-bottom: 5px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.log-box .log-entry.error {
+    color: #ff6b6b;
+}
+
+.log-box .log-entry.success {
+    color: #69db7c;
+}
+
+.log-box .log-entry.warning {
+    color: #ffd43b;
+}
+
+.log-box .log-entry.info {
+    color: #4dabf7;
+}
+
+/* Step indicators */
+.step-icon {
+    font-size: 10px;
+    margin-right: 8px;
+}
+
+#step-1 .step-icon,
+#step-2 .step-icon, 
+#step-3 .step-icon,
+#step-4 .step-icon,
+#step-5 .step-icon {
+    color: var(--bs-secondary);
+}
+
+.step-in-progress .step-icon {
+    color: var(--bs-primary) !important;
+    animation: pulse 1.5s infinite;
+}
+
+.step-complete .step-icon {
+    color: var(--bs-success) !important;
+}
+
+.step-error .step-icon {
+    color: var(--bs-danger) !important;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.4;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Card styling enhancements */
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1.5rem;
+}
+
+.card-header {
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
+/* Light theme overrides */
+[data-bs-theme="light"] {
+    --bs-body-color: #212529;
+    --bs-body-bg: #f8f9fa;
+}
+
+[data-bs-theme="light"] .log-box {
+    background-color: #f1f3f5;
+    color: #212529;
+}
+
+[data-bs-theme="light"] .log-box .log-entry {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+[data-bs-theme="light"] .log-box .log-entry.error {
+    color: #e03131;
+}
+
+[data-bs-theme="light"] .log-box .log-entry.success {
+    color: #2b8a3e;
+}
+
+[data-bs-theme="light"] .log-box .log-entry.warning {
+    color: #e67700;
+}
+
+[data-bs-theme="light"] .log-box .log-entry.info {
+    color: #1971c2;
+}
+
+/* Button hover effects */
+.btn {
+    transition: all 0.2s ease-in-out;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+}
+
+/* Form input focus effect */
+.form-control:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Download location styling */
+#download-location-text {
+    font-family: monospace;
+    overflow-x: auto;
+    white-space: nowrap;
+    max-width: 100%;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 8px;
+}
+
+#download-location-container code {
+    color: #00ff00;
+}
+
+[data-bs-theme="light"] #download-location-container code {
+    color: #28a745;
+}
+
+#download-location-text {
+    background-color: #343a40;
+}
+
+[data-bs-theme="light"] #download-location-text {
+    background-color: #f1f3f5;
+    color: #212529;
+}
+
