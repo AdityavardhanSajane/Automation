@@ -42,16 +42,20 @@ config = load_config()
 # Function to open browser
 def open_browser():
     """Open the browser after a short delay to ensure the server has started"""
-    time.sleep(2)
-    try:
-        webbrowser.open('http://localhost:5000/')
-        logger.info("Browser opened to http://localhost:5000/")
-    except Exception as e:
-        logger.error(f"Failed to open browser: {str(e)}")
+    # Only open browser if not already launched (check environment variable)
+    if not os.environ.get('BROWSER_LAUNCHED'):
+        time.sleep(2)
+        try:
+            webbrowser.open('http://localhost:5000/')
+            os.environ['BROWSER_LAUNCHED'] = 'True'
+            logger.info("Browser opened to http://localhost:5000/")
+        except Exception as e:
+            logger.error(f"Failed to open browser: {str(e)}")
 
 # Start browser in a separate thread if this is main process
-if os.environ.get('FLASK_RUN_FROM_CLI') != 'true' and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-    threading.Thread(target=open_browser).start()
+# We'll let main.py handle this instead
+# if os.environ.get('FLASK_RUN_FROM_CLI') != 'true' and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+#     threading.Thread(target=open_browser).start()
 
 @app.route('/')
 def index():

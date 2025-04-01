@@ -5,8 +5,12 @@ import time
 
 def open_browser():
     """Open the browser after a short delay to ensure the server has started"""
-    time.sleep(1.5)
-    webbrowser.open('http://localhost:5000/')
+    # Only open browser if not already launched (check environment variable)
+    if not os.environ.get('BROWSER_LAUNCHED'):
+        time.sleep(1.5)
+        webbrowser.open('http://localhost:5000/')
+        # Set environment variable to indicate browser has been launched
+        os.environ['BROWSER_LAUNCHED'] = 'True'
 
 if __name__ == "__main__":
     # Start a thread to open the browser
