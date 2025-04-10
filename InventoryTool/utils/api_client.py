@@ -1,28 +1,21 @@
 import logging
 import requests
 import re
-import asyncio
 from functools import lru_cache
-import base64
-import urllib3
+from base64 import b64encode
 
-# Disable insecure request warnings
+# Add this line to suppress the InsecureRequestWarning that will appear when using verify=False
+import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
 def create_basic_auth(username, password):
     """Create a basic auth token from username and password"""
-    try:
-        auth_string = f"{username}:{password}"
-        auth_bytes = auth_string.encode('ascii')
-        base64_bytes = base64.b64encode(auth_bytes)
-        base64_string = base64_bytes.decode('ascii')
-        return base64_string
-    except Exception as e:
-        logger.error(f"Error creating basic auth token: {str(e)}")
+    if username is None or password is None:
         return ""
+    auth_str = f"{username}:{password}"
+    return b64encode(auth_str.encode()).decode('ascii')
 
 class BaseAPIClient:
     """Base class for API clients"""
@@ -35,14 +28,19 @@ class BaseAPIClient:
         self.password = password
         self.token = token
         self.session = requests.Session()
+        
+        # If token is provided, set up authentication header
+        if token:
+            self.session.headers.update({'Authorization': f'Bearer {token}'})
     
     def test_connection(self):
         """Test the API connection"""
-        raise NotImplementedError("This method must be implemented by subclasses")
+        raise NotImplementedError("Subclasses must implement this method")
     
     def get_auth_token(self):
         """Get authentication token"""
-        raise NotImplementedError("This method must be implemented by subclasses")
+        raise NotImplementedError("Subclasses must implement this method")
+
 
 class XLRClient(BaseAPIClient):
     """Client for interacting with XebiaLabs Release API"""
@@ -90,15 +88,79 @@ class XLRClient(BaseAPIClient):
         return create_basic_auth(self.username, self.password)
     
     def extract_spk_from_release(self, release_url):
-        """Extract SPK from release train URL"""
-        # Example: Extract SPK123 from a URL like "/releases/release/SPK123_Release_Train"
-        match = re.search(r'SPK(\d+)', release_url)
-        if match:
-            return f"SPK{match.group(1)}"
-        return None
+        """
+        Extract SPK from release train URL or from release variables
+        First attempts to get it from release variables, then falls back to URL pattern matching
+        """
+        try:
+            # Extract release ID from URL
+            release_id = release_url.split('/')[-1]
+            
+            # Get release details with variables
+            url = f"{self.base_url}/api/v1/releases/{release_id}"
+            logger.debug(f"Getting release details from: {url}")
+            response = self.session.get(url, verify=False)
+            
+            if response.status_code == 200:
+                release_data = response.json()
+                
+                # Try to get SPK from releaseName variable
+                variables = release_data.get('variables', [])
+                release_name = None
+                
+                for var in variables:
+                    if var.get('key') == 'releaseName':
+                        release_name = var.get('value')
+                        logger.info(f"Found releaseName variable: {release_name}")
+                        break
+                
+                if release_name:
+                    # Look for capitalized words that might be SPK names like CODECTS
+                    parts = re.split(r'[/_\-\s]', release_name)
+                    for part in parts:
+                        # Check if part is fully capitalized with at least 3 characters
+                        if part.isupper() and len(part) >= 3 and part not in ["WMTO", "DEVOPS"]:
+                            logger.info(f"Identified SPK name from releaseName: {part}")
+                            return part
+            
+            # Fall back to URL pattern matching if we couldn't extract from variables
+            logger.info(f"Falling back to URL pattern matching for SPK")
+            
+            # First check if URL contains SPK pattern with numbers (SPK123)
+            spk_num_match = re.search(r'SPK(\d+)', release_url)
+            if spk_num_match:
+                spk = f"SPK{spk_num_match.group(1)}"
+                logger.info(f"Extracted SPK from URL number pattern: {spk}")
+                return spk
+            
+            # If not, look for capitalized words that might be SPK names
+            parts = re.split(r'[/_\-\s]', release_url)
+            for part in parts:
+                # Check if part is fully capitalized with at least 3 characters
+                if part.isupper() and len(part) >= 3:
+                    logger.info(f"Identified potential SPK name from URL: {part}")
+                    return part
+            
+            # Last resort: look for words with pattern like 'CODECTS'
+            words_match = re.search(r'([A-Z]{3,})', release_url)
+            if words_match:
+                possible_spk = words_match.group(1)
+                logger.info(f"Using best guess for SPK: {possible_spk}")
+                return possible_spk
+                
+            logger.warning(f"Could not identify SPK in release or URL: {release_url}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error extracting SPK from release: {str(e)}")
+            return None
     
     def get_components_from_release(self, release_url):
-        """Get component names and IDs from the release train URL"""
+        """
+        Get component names from the release train URL
+        First tries to get components from releaseComponents variable, 
+        then falls back to finding component groups in phases
+        """
         try:
             # Extract release ID from URL
             release_id = release_url.split('/')[-1]
@@ -114,54 +176,132 @@ class XLRClient(BaseAPIClient):
             release_data = response.json()
             components = []
             
-            # Extract components from phases
-            for phase in release_data.get('phases', []):
-                for task in phase.get('tasks', []):
-                    if task.get('type') == 'xlrelease.ParallelGroup':
-                        # This might be a component group
-                        component_name = task.get('title')
-                        if component_name:
-                            components.append({
-                                'id': task.get('id'),
-                                'name': component_name,
-                                'environments': []
-                            })
+            # First try to get components from releaseComponents variable
+            variables = release_data.get('variables', [])
+            release_components_var = None
             
+            for var in variables:
+                if var.get('key') == 'releaseComponents':
+                    release_components_var = var.get('value')
+                    logger.info(f"Found releaseComponents variable: {release_components_var}")
+                    break
+            
+            # If we found the releaseComponents variable, parse it
+            if release_components_var:
+                # Split by lines or spaces
+                component_entries = re.split(r'[\n\r\s]+', release_components_var)
+                
+                for entry in component_entries:
+                    entry = entry.strip()
+                    if not entry:
+                        continue
+                        
+                    # Check if this looks like a component name (not just the SPK or date)
+                    if '_' in entry and not re.match(r'\d{4}\.\d{2}\.\d{2}', entry) and entry not in components:
+                        logger.info(f"Adding component from releaseComponents: {entry}")
+                        components.append({
+                            'id': None,  # No task ID when getting from variables
+                            'name': entry,
+                            'environments': []
+                        })
+            
+            # If we didn't get any components from variables, fall back to the old method
+            if not components:
+                logger.info("No components found in releaseComponents variable, falling back to phase extraction")
+                # Extract components from phases
+                for phase in release_data.get('phases', []):
+                    for task in phase.get('tasks', []):
+                        if task.get('type') == 'xlrelease.ParallelGroup':
+                            # This might be a component group
+                            component_name = task.get('title')
+                            if component_name:
+                                components.append({
+                                    'id': task.get('id'),
+                                    'name': component_name,
+                                    'environments': []
+                                })
+            
+            logger.info(f"Found {len(components)} components for release")
             return components
         except Exception as e:
             logger.error(f"Error getting components from release: {str(e)}")
             return []
     
-    def get_environments_for_components(self, components):
-        """Get environment names for each component"""
+    def get_environments_for_components(self, components, release_url=None):
+        """
+        Get environment names for each component
+        First tries to get environments from integratedReleaseEnvironments variable,
+        then falls back to task titles
+        """
         try:
+            # Try to get environments from integratedReleaseEnvironments variable if release_url is provided
+            global_environments = []
+            
+            if release_url:
+                # Extract release ID from URL
+                release_id = release_url.split('/')[-1]
+                
+                # Get release details
+                url = f"{self.base_url}/api/v1/releases/{release_id}"
+                response = self.session.get(url, verify=False)
+                
+                if response.status_code == 200:
+                    release_data = response.json()
+                    variables = release_data.get('variables', [])
+                    
+                    # Look for the integratedReleaseEnvironments variable
+                    for var in variables:
+                        if var.get('key') == 'integratedReleaseEnvironments':
+                            env_var_value = var.get('value')
+                            logger.info(f"Found integratedReleaseEnvironments variable: {env_var_value}")
+                            
+                            # Parse environments from the variable
+                            if env_var_value:
+                                # Split by common separators
+                                env_entries = re.split(r'[\n\r\s,;]+', env_var_value)
+                                for env in env_entries:
+                                    env = env.strip().upper()
+                                    if env and env not in global_environments:
+                                        global_environments.append(env)
+                            
+                            break
+                    
+                    logger.info(f"Extracted global environments from variable: {global_environments}")
+            
             updated_components = []
             
             for component in components:
-                # Get component tasks
-                url = f"{self.base_url}/api/v1/releases/tasks/{component['id']}"
-                response = self.session.get(url, verify=False)
+                # Initialize with global environments if available
+                environments = global_environments.copy() if global_environments else []
                 
-                if response.status_code != 200:
-                    logger.warning(f"Failed to get tasks for component {component['name']}: {response.status_code}")
-                    updated_components.append(component)
-                    continue
-                
-                task_data = response.json()
-                environments = []
-                
-                # Extract environment names from tasks
-                for task in task_data.get('tasks', []):
-                    # Look for environment indicators in task titles (LLE, PROD, etc.)
-                    title = task.get('title', '').upper()
-                    for env in ['LLE', 'PROD', 'UAT', 'DEV', 'TEST']:
-                        if env in title:
-                            if env not in environments:
-                                environments.append(env)
+                # If no global environments or component has a task ID, try to get environments from tasks
+                if (not environments or not component.get('id')):
+                    # If component has a task ID, try to get environments from task titles
+                    if component.get('id'):
+                        url = f"{self.base_url}/api/v1/releases/tasks/{component['id']}"
+                        response = self.session.get(url, verify=False)
+                        
+                        if response.status_code == 200:
+                            task_data = response.json()
+                            
+                            # Extract environment names from tasks
+                            for task in task_data.get('tasks', []):
+                                # Look for environment indicators in task titles (LLE, PROD, etc.)
+                                title = task.get('title', '').upper()
+                                for env in ['LLE', 'PROD', 'UAT', 'DEV', 'TEST']:
+                                    if env in title and env not in environments:
+                                        environments.append(env)
+                    
+                    # If still no environments, use default set
+                    if not environments:
+                        logger.info(f"No environments found for component {component['name']}, using default set")
+                        environments = ['PROD']  # Default to PROD if nothing found
                 
                 updated_component = component.copy()
                 updated_component['environments'] = environments
                 updated_components.append(updated_component)
+                
+                logger.info(f"Component {component['name']} has environments: {environments}")
             
             return updated_components
         except Exception as e:

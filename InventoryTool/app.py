@@ -1,25 +1,23 @@
-import json
-import logging
 import os
-import re
+import logging
+import uuid
+import json
 from datetime import datetime
-from functools import wraps
-from urllib.parse import urlparse
-
-from flask import (Flask, Response, jsonify, redirect, render_template, request,
-                   send_file, session, url_for)
-
-from utils.api_client import AnsibleTowerClient, XLRClient
+from functools import lru_cache
+from flask import Flask, render_template, request, session, jsonify, send_file, Response
+from utils.api_client import XLRClient, AnsibleTowerClient
 from utils.excel_generator import generate_excel_file
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# Initialize Flask app
 app = Flask(__name__)
-app.secret_key = "your-secret-key-here"  # For session management
+app.secret_key = os.environ.get("SESSION_SECRET", str(uuid.uuid4()))
 
-# Load configuration from JSON file
+
+# Load configuration from config.json file
 def load_config():
     """Load API URLs from config file"""
     try:
@@ -28,60 +26,80 @@ def load_config():
         logger.info("Loaded configuration from config.json")
         return config
     except Exception as e:
-        logger.error(f"Error loading config.json: {str(e)}")
+        logger.error(f"Failed to load config.json: {str(e)}")
+        # Return default values if config file is missing or invalid
         return {"xlr_url": "", "ansible_url": ""}
+
 
 # Load configuration
 config = load_config()
 
+# Browser opening is now handled entirely in main.py
+# The code below has been completely removed to prevent any double browser windows
+
+# Comment: removed browser_opened variable
+# Comment: removed open_browser function
+# Comment: browser opening is now handled only in main.py
+
+
 @app.route('/')
 def index():
     """Render the main application page."""
+    # Pass API URLs to the template
     return render_template('index.html', 
                           xlr_url=config.get('xlr_url', ''),
                           ansible_url=config.get('ansible_url', ''))
+
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate():
     """Authenticate with XLR and Ansible Tower APIs."""
     try:
-        # Get credentials from request
-        xlr_url = request.form.get('xlr_url')
-        ansible_url = request.form.get('ansible_url')
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
-        # Debug: Print received values (sanitized for security)
-        logger.info(f"Authentication attempt with XLR URL: {xlr_url}")
-        logger.info(f"Authentication attempt with Ansible URL: {ansible_url}")
-        logger.info(f"Authentication attempt with username: {username}")
-        logger.info(f"Password provided: {'Yes' if password else 'No'}")
-        
-        # Debug: Log form data keys
-        logger.info(f"Form data keys: {list(request.form.keys())}")
-        
-        if not all([xlr_url, ansible_url, username, password]):
-            # Debug: Log which fields are missing
-            missing = []
-            if not xlr_url: missing.append('xlr_url')
-            if not ansible_url: missing.append('ansible_url')
-            if not username: missing.append('username')
-            if not password: missing.append('password')
+        # Get credentials from form or JSON
+        if request.is_json:
+            data = request.json
+            xlr_username = data.get('username', data.get('xlr_username', ''))
+            xlr_password = data.get('password', data.get('xlr_password', ''))
+            ansible_username = data.get('username', data.get('ansible_username', ''))
+            ansible_password = data.get('password', data.get('ansible_password', ''))
+            xlr_url = data.get('xlr_url', config['xlr_url'])
+            ansible_url = data.get('ansible_url', config['ansible_url'])
+        else:
+            xlr_username = request.form.get('username', request.form.get('nbk_id', ''))
+            xlr_password = request.form.get('password', '')
+            ansible_username = xlr_username
+            ansible_password = xlr_password
+            # Use custom URLs if provided in form, otherwise use config
+            xlr_url = request.form.get('xlr_url', config['xlr_url'])
+            ansible_url = request.form.get('ansible_url', config['ansible_url'])
             
-            logger.error(f"Missing required fields: {', '.join(missing)}")
+        # Log form field names for debugging
+        logger.debug(f"Form field names: {list(request.form.keys())}")
+        logger.info(f"Using XLR URL: {xlr_url}")
+        logger.info(f"Using Ansible URL: {ansible_url}")
+
+        if not xlr_url or not ansible_url:
             return jsonify({
-                'status': 'error',
-                'message': f'Missing required fields: {", ".join(missing)}'
-            }), 400
-        
-        # Store URLs in session
+                'status':
+                'error',
+                'message':
+                'API URLs not configured. Please update config.json file.'
+            }), 500
+
+        # Store API URLs in session
         session['xlr_url'] = xlr_url
         session['ansible_url'] = ansible_url
-        
-        # Test API connection
-        xlr_client = XLRClient(xlr_url, username, password)
-        ansible_client = AnsibleTowerClient(ansible_url, username, password)
-        
+
+        # Log connection attempts (not credentials)
+        logger.info(
+            f"Authenticating to XLR at {xlr_url} and Ansible Tower at {ansible_url}"
+        )
+
+        # Create API clients and test connections
+        xlr_client = XLRClient(xlr_url, xlr_username, xlr_password)
+        ansible_client = AnsibleTowerClient(ansible_url, ansible_username,
+                                            ansible_password)
+
         xlr_status = xlr_client.test_connection()
         ansible_status = ansible_client.test_connection()
 
@@ -189,7 +207,7 @@ def fetch_data():
                     }) + "\n\n"
 
                 components_with_env = xlr_client.get_environments_for_components(
-                    xlr_data)
+                    xlr_data, release_train_url)
                 yield "data: " + json.dumps({
                     'step':
                     2,
@@ -393,7 +411,3 @@ def logout():
     """Clear session data to logout."""
     session.clear()
     return jsonify({'status': 'success', 'message': 'Logged out successfully'})
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
