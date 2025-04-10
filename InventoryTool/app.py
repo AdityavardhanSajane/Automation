@@ -1,27 +1,25 @@
-import os
-import logging
-import uuid
 import json
-import webbrowser
-import threading
-import time
+import logging
+import os
+import re
 from datetime import datetime
-from functools import lru_cache
-from flask import Flask, render_template, request, session, jsonify, send_file, Response
-import asyncio
-from utils.api_client import XLRClient, AnsibleTowerClient
+from functools import wraps
+from urllib.parse import urlparse
+
+from flask import (Flask, Response, jsonify, redirect, render_template, request,
+                   send_file, session, url_for)
+
+from utils.api_client import AnsibleTowerClient, XLRClient
 from utils.excel_generator import generate_excel_file
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", str(uuid.uuid4()))
+app.secret_key = "your-secret-key-here"  # For session management
 
-
-# Load configuration from config.json file
+# Load configuration from JSON file
 def load_config():
     """Load API URLs from config file"""
     try:
@@ -30,87 +28,43 @@ def load_config():
         logger.info("Loaded configuration from config.json")
         return config
     except Exception as e:
-        logger.error(f"Failed to load config.json: {str(e)}")
-        # Return default values if config file is missing or invalid
+        logger.error(f"Error loading config.json: {str(e)}")
         return {"xlr_url": "", "ansible_url": ""}
-
 
 # Load configuration
 config = load_config()
 
-# Global variable to track if browser has been opened
-browser_opened = False
-
-
-# Function to open browser
-def open_browser():
-    """Open the browser after a short delay to ensure the server has started"""
-    global browser_opened
-    # Only open browser if not already launched
-    if not browser_opened:
-        time.sleep(2)
-        try:
-            webbrowser.open('http://localhost:5000/')
-            browser_opened = True
-            logger.info("Browser opened to http://localhost:5000/")
-        except Exception as e:
-            logger.error(f"Failed to open browser: {str(e)}")
-
-
-# We'll let main.py handle browser opening instead
-# if os.environ.get('FLASK_RUN_FROM_CLI') != 'true' and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-#     threading.Thread(target=open_browser).start()
-
-
 @app.route('/')
 def index():
     """Render the main application page."""
-    return render_template('index.html')
-
+    return render_template('index.html', 
+                          xlr_url=config.get('xlr_url', ''),
+                          ansible_url=config.get('ansible_url', ''))
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate():
     """Authenticate with XLR and Ansible Tower APIs."""
     try:
-        # Get credentials from form or JSON
-        if request.is_json:
-            data = request.json
-            xlr_username = data.get('xlr_username')
-            xlr_password = data.get('xlr_password')
-            ansible_username = data.get('ansible_username')
-            ansible_password = data.get('ansible_password')
-        else:
-            xlr_username = request.form.get('nbk_id')
-            xlr_password = request.form.get('password')
-            ansible_username = xlr_username
-            ansible_password = xlr_password
-
-        # Use URLs from config file
-        xlr_url = config['xlr_url']
-        ansible_url = config['ansible_url']
-
-        if not xlr_url or not ansible_url:
+        # Get credentials from request
+        xlr_url = request.form.get('xlr_url')
+        ansible_url = request.form.get('ansible_url')
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        if not all([xlr_url, ansible_url, username, password]):
             return jsonify({
-                'status':
-                'error',
-                'message':
-                'API URLs not configured. Please update config.json file.'
-            }), 500
-
-        # Store API URLs in session
+                'status': 'error',
+                'message': 'Missing required fields'
+            }), 400
+        
+        # Store URLs in session
         session['xlr_url'] = xlr_url
         session['ansible_url'] = ansible_url
-
-        # Log connection attempts (not credentials)
-        logger.info(
-            f"Authenticating to XLR at {xlr_url} and Ansible Tower at {ansible_url}"
-        )
-
-        # Create API clients and test connections
-        xlr_client = XLRClient(xlr_url, xlr_username, xlr_password)
-        ansible_client = AnsibleTowerClient(ansible_url, ansible_username,
-                                            ansible_password)
-
+        
+        # Test API connection
+        xlr_client = XLRClient(xlr_url, username, password)
+        ansible_client = AnsibleTowerClient(ansible_url, username, password)
+        
         xlr_status = xlr_client.test_connection()
         ansible_status = ansible_client.test_connection()
 
@@ -119,15 +73,39 @@ def authenticate():
             session['xlr_token'] = xlr_client.get_auth_token()
             session['ansible_token'] = ansible_client.get_auth_token()
             return jsonify({
-                'status':
-                'success',
-                'message':
-                'Successfully authenticated with both APIs'
+                'status': 'success',
+                'message': 'Successfully authenticated with both APIs'
             })
-        else:
+        elif ansible_status and not xlr_status:
+            # Partial success - only Ansible Tower works
+            error_msg = "XebiaLabs Release (XLR) authentication failed, but Ansible Tower authentication succeeded."
+            error_msg += " Please check your XLR credentials and API URL."
+            logger.error(error_msg)
             return jsonify({
                 'status': 'error',
-                'message': 'Authentication failed',
+                'message': error_msg,
+                'xlr_status': xlr_status,
+                'ansible_status': ansible_status
+            }), 401
+        elif xlr_status and not ansible_status:
+            # Partial success - only XLR works
+            error_msg = "Ansible Tower authentication failed, but XebiaLabs Release (XLR) authentication succeeded."
+            error_msg += " Please check your Ansible Tower credentials and API URL."
+            logger.error(error_msg)
+            return jsonify({
+                'status': 'error',
+                'message': error_msg,
+                'xlr_status': xlr_status,
+                'ansible_status': ansible_status
+            }), 401
+        else:
+            # Both failed
+            error_msg = "Authentication failed for both XebiaLabs Release and Ansible Tower APIs."
+            error_msg += " Please check your credentials and API URLs."
+            logger.error(error_msg)
+            return jsonify({
+                'status': 'error',
+                'message': error_msg,
                 'xlr_status': xlr_status,
                 'ansible_status': ansible_status
             }), 401
@@ -398,3 +376,7 @@ def logout():
     """Clear session data to logout."""
     session.clear()
     return jsonify({'status': 'success', 'message': 'Logged out successfully'})
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)

@@ -1,40 +1,48 @@
 import logging
 import requests
 import re
+import asyncio
 from functools import lru_cache
-from base64 import b64encode
-
-# Add this line to suppress the InsecureRequestWarning that will appear when using verify=False
+import base64
 import urllib3
+
+# Disable insecure request warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Set up logging
 logger = logging.getLogger(__name__)
 
 def create_basic_auth(username, password):
     """Create a basic auth token from username and password"""
-    if username is None or password is None:
+    try:
+        auth_string = f"{username}:{password}"
+        auth_bytes = auth_string.encode('ascii')
+        base64_bytes = base64.b64encode(auth_bytes)
+        base64_string = base64_bytes.decode('ascii')
+        return base64_string
+    except Exception as e:
+        logger.error(f"Error creating basic auth token: {str(e)}")
         return ""
-    auth_str = f"{username}:{password}"
-    return b64encode(auth_str.encode()).decode('ascii')
-
 
 class BaseAPIClient:
     """Base class for API clients"""
     
     def __init__(self, base_url, username=None, password=None, token=None):
-        self.base_url = base_url.rstrip('/')
+        # Strip any trailing slashes and make sure we don't have '/api' at the end already
+        self.base_url = base_url.rstrip('/').rstrip('/api')
+        logger.debug(f"Initialized API client with base URL: {self.base_url}")
         self.username = username
         self.password = password
+        self.token = token
         self.session = requests.Session()
     
     def test_connection(self):
         """Test the API connection"""
-        raise NotImplementedError("Subclasses must implement this method")
+        raise NotImplementedError("This method must be implemented by subclasses")
     
     def get_auth_token(self):
         """Get authentication token"""
-        raise NotImplementedError("Subclasses must implement this method")
-
+        raise NotImplementedError("This method must be implemented by subclasses")
 
 class XLRClient(BaseAPIClient):
     """Client for interacting with XebiaLabs Release API"""
@@ -47,9 +55,32 @@ class XLRClient(BaseAPIClient):
             self.session.headers.update({'Authorization': f'Basic {auth_token}'})
             
             # Test API access with a simple request
-            url = f"{self.base_url}/api/v1/config/templates"
-            response = self.session.get(url, verify=False)
-            return response.status_code == 200
+            # Try standard XLR endpoints in order of likelihood to exist
+            endpoints = [
+                "/api/v1/releases",
+                "/api/v1/templates",
+                "/api/v1/folders",
+                "/api/v1/config/templates"
+            ]
+            
+            for endpoint in endpoints:
+                url = f"{self.base_url}{endpoint}"
+                logger.debug(f"Making XLR request to URL: {url}")
+                response = self.session.get(url, verify=False)
+                logger.debug(f"XLR response status: {response.status_code} for endpoint {endpoint}")
+                
+                if response.status_code == 200:
+                    logger.info(f"XLR connection successful using endpoint: {endpoint}")
+                    return True
+                else:
+                    try:
+                        error_content = response.json()
+                        logger.error(f"XLR API error for {endpoint}: {error_content}")
+                    except:
+                        logger.error(f"XLR API error with status code {response.status_code} for {endpoint}")
+            
+            logger.error("XLR connection failed - all endpoints returned errors")
+            return False
         except Exception as e:
             logger.error(f"XLR connection test failed: {str(e)}")
             return False
@@ -69,11 +100,6 @@ class XLRClient(BaseAPIClient):
     def get_components_from_release(self, release_url):
         """Get component names and IDs from the release train URL"""
         try:
-            # Set up Basic Authentication if not already done
-            if 'Authorization' not in self.session.headers:
-                auth_token = create_basic_auth(self.username, self.password)
-                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
-                
             # Extract release ID from URL
             release_id = release_url.split('/')[-1]
             
@@ -109,11 +135,6 @@ class XLRClient(BaseAPIClient):
     def get_environments_for_components(self, components):
         """Get environment names for each component"""
         try:
-            # Set up Basic Authentication if not already done
-            if 'Authorization' not in self.session.headers:
-                auth_token = create_basic_auth(self.username, self.password)
-                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
-                
             updated_components = []
             
             for component in components:
@@ -160,7 +181,15 @@ class AnsibleTowerClient(BaseAPIClient):
             
             # Test API access with a simple request
             url = f"{self.base_url}/api/v2/inventories/"
+            logger.debug(f"Making Ansible Tower request to URL: {url}")
             response = self.session.get(url, verify=False)
+            logger.debug(f"Ansible Tower response status: {response.status_code}")
+            if response.status_code != 200:
+                try:
+                    error_content = response.json()
+                    logger.error(f"Ansible Tower API error: {error_content}")
+                except:
+                    logger.error(f"Ansible Tower API error with status code {response.status_code}")
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Ansible Tower connection test failed: {str(e)}")
@@ -174,11 +203,6 @@ class AnsibleTowerClient(BaseAPIClient):
     def get_inventories_by_spk(self, spk):
         """Get inventory groups by SPK"""
         try:
-            # Set up Basic Authentication if not already done
-            if 'Authorization' not in self.session.headers:
-                auth_token = create_basic_auth(self.username, self.password)
-                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
-                
             url = f"{self.base_url}/api/v2/inventories/"
             params = {
                 'search': f"{spk}_PROD"
@@ -223,11 +247,6 @@ class AnsibleTowerClient(BaseAPIClient):
     def get_servers_for_component(self, component_name, environment, inventories):
         """Get server details for a component and environment"""
         try:
-            # Set up Basic Authentication if not already done
-            if 'Authorization' not in self.session.headers:
-                auth_token = create_basic_auth(self.username, self.password)
-                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
-                
             servers = []
             
             for inventory in inventories:
