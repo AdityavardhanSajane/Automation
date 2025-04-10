@@ -2,24 +2,22 @@ import logging
 import requests
 import re
 import asyncio
-import os
 from functools import lru_cache
 
-logger = logging.getLogger(__name__)
+# Add this line to suppress the InsecureRequestWarning that will appear when using verify=False
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Certificate paths - update these paths to match your certificate locations
-XLR_CERT_PATH = os.path.join(os.path.dirname(__file__), '..', 'certs', 'xlr_cert.pem')
-ANSIBLE_CERT_PATH = os.path.join(os.path.dirname(__file__), '..', 'certs', 'ansible_cert.pem')
+logger = logging.getLogger(__name__)
 
 class BaseAPIClient:
     """Base class for API clients"""
     
-    def __init__(self, base_url, username=None, password=None, token=None, cert_path=None):
+    def __init__(self, base_url, username=None, password=None, token=None):
         self.base_url = base_url.rstrip('/')
         self.username = username
         self.password = password
         self.token = token
-        self.cert_path = cert_path
         self.session = requests.Session()
         
         # If token is provided, set up authentication header
@@ -38,9 +36,6 @@ class BaseAPIClient:
 class XLRClient(BaseAPIClient):
     """Client for interacting with XebiaLabs Release API"""
     
-    def __init__(self, base_url, username=None, password=None, token=None):
-        super().__init__(base_url, username, password, token, cert_path=XLR_CERT_PATH)
-    
     def test_connection(self):
         """Test connection to XLR API"""
         try:
@@ -53,7 +48,7 @@ class XLRClient(BaseAPIClient):
             
             # Test API access with a simple request
             url = f"{self.base_url}/api/v1/config/templates"
-            response = self.session.get(url, verify=self.cert_path)
+            response = self.session.get(url, verify=False)
             return response.status_code == 200
         except Exception as e:
             logger.error(f"XLR connection test failed: {str(e)}")
@@ -70,7 +65,7 @@ class XLRClient(BaseAPIClient):
                 "username": self.username,
                 "password": self.password
             }
-            response = self.session.post(url, json=data, verify=self.cert_path)
+            response = self.session.post(url, json=data, verify=False)
             
             if response.status_code == 200:
                 token_data = response.json()
@@ -98,7 +93,7 @@ class XLRClient(BaseAPIClient):
             
             # Get release details
             url = f"{self.base_url}/api/v1/releases/{release_id}"
-            response = self.session.get(url, verify=self.cert_path)
+            response = self.session.get(url, verify=False)
             
             if response.status_code != 200:
                 logger.error(f"Failed to get release: {response.status_code}")
@@ -133,7 +128,7 @@ class XLRClient(BaseAPIClient):
             for component in components:
                 # Get component tasks
                 url = f"{self.base_url}/api/v1/releases/tasks/{component['id']}"
-                response = self.session.get(url, verify=self.cert_path)
+                response = self.session.get(url, verify=False)
                 
                 if response.status_code != 200:
                     logger.warning(f"Failed to get tasks for component {component['name']}: {response.status_code}")
@@ -165,9 +160,6 @@ class XLRClient(BaseAPIClient):
 class AnsibleTowerClient(BaseAPIClient):
     """Client for interacting with Ansible Tower API"""
     
-    def __init__(self, base_url, username=None, password=None, token=None):
-        super().__init__(base_url, username, password, token, cert_path=ANSIBLE_CERT_PATH)
-    
     def test_connection(self):
         """Test connection to Ansible Tower API"""
         try:
@@ -180,7 +172,7 @@ class AnsibleTowerClient(BaseAPIClient):
             
             # Test API access with a simple request
             url = f"{self.base_url}/api/v2/inventories/"
-            response = self.session.get(url, verify=self.cert_path)
+            response = self.session.get(url, verify=False)
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Ansible Tower connection test failed: {str(e)}")
@@ -196,7 +188,7 @@ class AnsibleTowerClient(BaseAPIClient):
             response = self.session.post(
                 url,
                 auth=(self.username, self.password),
-                verify=self.cert_path
+                verify=False
             )
             
             if response.status_code == 201:
@@ -218,7 +210,7 @@ class AnsibleTowerClient(BaseAPIClient):
                 'search': f"{spk}_PROD"
             }
             
-            response = self.session.get(url, params=params, verify=self.cert_path)
+            response = self.session.get(url, params=params, verify=False)
             
             if response.status_code != 200:
                 logger.error(f"Failed to get inventories: {response.status_code}")
@@ -233,7 +225,7 @@ class AnsibleTowerClient(BaseAPIClient):
                 
                 # Get inventory groups
                 groups_url = f"{self.base_url}/api/v2/inventories/{inventory_id}/groups/"
-                groups_response = self.session.get(groups_url, verify=self.cert_path)
+                groups_response = self.session.get(groups_url, verify=False)
                 
                 if groups_response.status_code != 200:
                     logger.warning(f"Failed to get groups for inventory {inventory_name}: {groups_response.status_code}")
@@ -269,7 +261,7 @@ class AnsibleTowerClient(BaseAPIClient):
                         
                         # Get hosts in this group
                         hosts_url = f"{self.base_url}/api/v2/groups/{group_id}/hosts/"
-                        hosts_response = self.session.get(hosts_url, verify=self.cert_path)
+                        hosts_response = self.session.get(hosts_url, verify=False)
                         
                         if hosts_response.status_code != 200:
                             logger.warning(f"Failed to get hosts for group {group_name}: {hosts_response.status_code}")
@@ -283,7 +275,7 @@ class AnsibleTowerClient(BaseAPIClient):
                             
                             # Get host details including variables
                             host_url = f"{self.base_url}/api/v2/hosts/{host_id}/"
-                            host_response = self.session.get(host_url, verify=self.cert_path)
+                            host_response = self.session.get(host_url, verify=False)
                             
                             if host_response.status_code != 200:
                                 logger.warning(f"Failed to get details for host {host_name}: {host_response.status_code}")
