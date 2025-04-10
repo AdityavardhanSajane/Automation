@@ -3,14 +3,17 @@ import webbrowser
 import threading
 import time
 
+# Global variable to track if browser has been opened
+browser_opened = False
+
 def open_browser():
     """Open the browser after a short delay to ensure the server has started"""
-    # Only open browser if not already launched (check environment variable)
-    if not os.environ.get('BROWSER_LAUNCHED'):
+    global browser_opened
+    # Only open browser if not already launched
+    if not browser_opened:
         time.sleep(1.5)
         webbrowser.open('http://localhost:5000/')
-        # Set environment variable to indicate browser has been launched
-        os.environ['BROWSER_LAUNCHED'] = 'True'
+        browser_opened = True
 
 if __name__ == "__main__":
     # Start a thread to open the browser
@@ -18,4 +21,3 @@ if __name__ == "__main__":
     
     # Run the Flask app
     app.run(host="0.0.0.0", port=5000, debug=True)
-

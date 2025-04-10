@@ -1,14 +1,22 @@
 import logging
 import requests
 import re
-import asyncio
 from functools import lru_cache
+from base64 import b64encode
 
 # Add this line to suppress the InsecureRequestWarning that will appear when using verify=False
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
+
+def create_basic_auth(username, password):
+    """Create a basic auth token from username and password"""
+    if username is None or password is None:
+        return ""
+    auth_str = f"{username}:{password}"
+    return b64encode(auth_str.encode()).decode('ascii')
+
 
 class BaseAPIClient:
     """Base class for API clients"""
@@ -17,12 +25,7 @@ class BaseAPIClient:
         self.base_url = base_url.rstrip('/')
         self.username = username
         self.password = password
-        self.token = token
         self.session = requests.Session()
-        
-        # If token is provided, set up authentication header
-        if token:
-            self.session.headers.update({'Authorization': f'Bearer {token}'})
     
     def test_connection(self):
         """Test the API connection"""
@@ -39,12 +42,9 @@ class XLRClient(BaseAPIClient):
     def test_connection(self):
         """Test connection to XLR API"""
         try:
-            if not self.token:
-                # Try to authenticate and get token
-                self.token = self.get_auth_token()
-                if not self.token:
-                    return False
-                self.session.headers.update({'Authorization': f'Bearer {self.token}'})
+            # Set up Basic Authentication
+            auth_token = create_basic_auth(self.username, self.password)
+            self.session.headers.update({'Authorization': f'Basic {auth_token}'})
             
             # Test API access with a simple request
             url = f"{self.base_url}/api/v1/config/templates"
@@ -55,27 +55,8 @@ class XLRClient(BaseAPIClient):
             return False
     
     def get_auth_token(self):
-        """Get authentication token from XLR"""
-        if self.token:
-            return self.token
-            
-        try:
-            url = f"{self.base_url}/authentication/login"
-            data = {
-                "username": self.username,
-                "password": self.password
-            }
-            response = self.session.post(url, json=data, verify=False)
-            
-            if response.status_code == 200:
-                token_data = response.json()
-                return token_data.get('token')
-            else:
-                logger.error(f"XLR authentication failed: {response.status_code}")
-                return None
-        except Exception as e:
-            logger.error(f"XLR authentication error: {str(e)}")
-            return None
+        """Get basic auth token for XLR"""
+        return create_basic_auth(self.username, self.password)
     
     def extract_spk_from_release(self, release_url):
         """Extract SPK from release train URL"""
@@ -88,6 +69,11 @@ class XLRClient(BaseAPIClient):
     def get_components_from_release(self, release_url):
         """Get component names and IDs from the release train URL"""
         try:
+            # Set up Basic Authentication if not already done
+            if 'Authorization' not in self.session.headers:
+                auth_token = create_basic_auth(self.username, self.password)
+                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
+                
             # Extract release ID from URL
             release_id = release_url.split('/')[-1]
             
@@ -123,6 +109,11 @@ class XLRClient(BaseAPIClient):
     def get_environments_for_components(self, components):
         """Get environment names for each component"""
         try:
+            # Set up Basic Authentication if not already done
+            if 'Authorization' not in self.session.headers:
+                auth_token = create_basic_auth(self.username, self.password)
+                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
+                
             updated_components = []
             
             for component in components:
@@ -163,12 +154,9 @@ class AnsibleTowerClient(BaseAPIClient):
     def test_connection(self):
         """Test connection to Ansible Tower API"""
         try:
-            if not self.token:
-                # Try to authenticate and get token
-                self.token = self.get_auth_token()
-                if not self.token:
-                    return False
-                self.session.headers.update({'Authorization': f'Bearer {self.token}'})
+            # Set up Basic Authentication
+            auth_token = create_basic_auth(self.username, self.password)
+            self.session.headers.update({'Authorization': f'Basic {auth_token}'})
             
             # Test API access with a simple request
             url = f"{self.base_url}/api/v2/inventories/"
@@ -179,32 +167,18 @@ class AnsibleTowerClient(BaseAPIClient):
             return False
     
     def get_auth_token(self):
-        """Get authentication token from Ansible Tower"""
-        if self.token:
-            return self.token
-            
-        try:
-            url = f"{self.base_url}/api/v2/tokens/"
-            response = self.session.post(
-                url,
-                auth=(self.username, self.password),
-                verify=False
-            )
-            
-            if response.status_code == 201:
-                token_data = response.json()
-                return token_data.get('token')
-            else:
-                logger.error(f"Ansible Tower authentication failed: {response.status_code}")
-                return None
-        except Exception as e:
-            logger.error(f"Ansible Tower authentication error: {str(e)}")
-            return None
+        """Get basic auth token for Ansible Tower"""
+        return create_basic_auth(self.username, self.password)
     
     @lru_cache(maxsize=32)
     def get_inventories_by_spk(self, spk):
         """Get inventory groups by SPK"""
         try:
+            # Set up Basic Authentication if not already done
+            if 'Authorization' not in self.session.headers:
+                auth_token = create_basic_auth(self.username, self.password)
+                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
+                
             url = f"{self.base_url}/api/v2/inventories/"
             params = {
                 'search': f"{spk}_PROD"
@@ -249,6 +223,11 @@ class AnsibleTowerClient(BaseAPIClient):
     def get_servers_for_component(self, component_name, environment, inventories):
         """Get server details for a component and environment"""
         try:
+            # Set up Basic Authentication if not already done
+            if 'Authorization' not in self.session.headers:
+                auth_token = create_basic_auth(self.username, self.password)
+                self.session.headers.update({'Authorization': f'Basic {auth_token}'})
+                
             servers = []
             
             for inventory in inventories:
