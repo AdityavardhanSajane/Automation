@@ -51,10 +51,27 @@ def authenticate():
         username = request.form.get('username')
         password = request.form.get('password')
         
+        # Debug: Print received values (sanitized for security)
+        logger.info(f"Authentication attempt with XLR URL: {xlr_url}")
+        logger.info(f"Authentication attempt with Ansible URL: {ansible_url}")
+        logger.info(f"Authentication attempt with username: {username}")
+        logger.info(f"Password provided: {'Yes' if password else 'No'}")
+        
+        # Debug: Log form data keys
+        logger.info(f"Form data keys: {list(request.form.keys())}")
+        
         if not all([xlr_url, ansible_url, username, password]):
+            # Debug: Log which fields are missing
+            missing = []
+            if not xlr_url: missing.append('xlr_url')
+            if not ansible_url: missing.append('ansible_url')
+            if not username: missing.append('username')
+            if not password: missing.append('password')
+            
+            logger.error(f"Missing required fields: {', '.join(missing)}")
             return jsonify({
                 'status': 'error',
-                'message': 'Missing required fields'
+                'message': f'Missing required fields: {", ".join(missing)}'
             }), 400
         
         # Store URLs in session
