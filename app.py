@@ -65,7 +65,8 @@ def authenticate():
             xlr_url = data.get('xlr_url', config['xlr_url'])
             ansible_url = data.get('ansible_url', config['ansible_url'])
         else:
-            xlr_username = request.form.get('username', request.form.get('nbk_id', ''))
+            # Get username from nbk_id field
+            xlr_username = request.form.get('nbk_id', '')
             xlr_password = request.form.get('password', '')
             ansible_username = xlr_username
             ansible_password = xlr_password
