@@ -153,7 +153,7 @@ def authenticate():
         }), 500
 
 
-@app.route('/fetch_data', methods=['POST'])
+@app.route('/fetch_data', methods=['POST', 'GET'])
 def fetch_data():
     """Fetch data from XLR and Ansible Tower APIs and return progress updates."""
     # Check if authenticated
@@ -164,8 +164,11 @@ def fetch_data():
         }), 401
 
     try:
-        # Get release train URL from request
-        release_train_url = request.form.get('release_train_url')
+        # Get release train URL from request (form for POST, args for GET)
+        if request.method == 'POST':
+            release_train_url = request.form.get('release_train_url')
+        else:
+            release_train_url = request.args.get('release_train_url')
         if not release_train_url:
             return jsonify({
                 'status': 'error',

@@ -61,54 +61,64 @@ class XLRClient(BaseAPIClient):
         """
         logger.info(f"Extracting release ID from URL: {release_url}")
         
-        # Special handling for complex URLs with hash fragments and relationships/table
+        # Handle URL encoding
+        release_url = release_url.replace('%23', '#').replace('%2F', '/')
+        
+        # FIRST APPROACH: Direct regex pattern matching for Release ID
+        # This is the most reliable method and should work with any URL format
+        release_pattern = r'Release([a-zA-Z0-9]+)'
+        release_match = re.search(release_pattern, release_url)
+        if release_match:
+            release_id = "Release" + release_match.group(1)
+            logger.info(f"Extracted Release ID using direct regex: {release_id}")
+            return release_id
+        
+        # SECOND APPROACH: Special handling for complex URLs with hash fragments and relationships/table
         if '#/' in release_url and '/relationships/table' in release_url:
-            # Match the pattern Folder-Folder-Folder-ReleaseXXX/relationships/table
-            # Extract the Release part
-            pattern = r'(Release[a-zA-Z0-9]+)'
-            match = re.search(pattern, release_url)
-            if match:
-                release_id = match.group(1)
-                logger.info(f"Extracted Release ID from complex URL: {release_id}")
-                return release_id
+            # For URLs like "https://release.horizon.bankofamerica.com/#/releases/Folder-Folder-Folder-ReleaseXXX/relationships/table"
+            # Extract the Release part using a more specific pattern
+            parts = release_url.split('/')
+            for part in parts:
+                if 'Release' in part:
+                    # This handles both standalone "ReleaseXXX" and "Folder-Folder-ReleaseXXX" patterns
+                    if '-Release' in part:
+                        final_parts = part.split('-')
+                        for p in final_parts:
+                            if p.startswith('Release'):
+                                release_id = p
+                                logger.info(f"Extracted Release ID from folder-release pattern: {release_id}")
+                                return release_id
+                    elif part.startswith('Release'):
+                        logger.info(f"Found Release ID directly: {part}")
+                        return part
         
-        # General case - remove anchor part if present 
-        if '#/' in release_url:
-            release_url = release_url.replace('#/', '/')
+        # THIRD APPROACH: General case - handle URL fragments
+        modified_url = release_url
+        if '#/' in modified_url:
+            modified_url = modified_url.replace('#/', '/')
         
-        # Remove relationships/table part if present
-        if '/relationships/table' in release_url:
-            release_url = release_url.replace('/relationships/table', '')
+        if '/relationships/table' in modified_url:
+            modified_url = modified_url.replace('/relationships/table', '')
         
-        # Split the URL by '/'
-        parts = release_url.split('/')
+        # Split the modified URL by '/'
+        parts = modified_url.split('/')
         
-        # Look for the part that contains Release
+        # Look for any part that contains 'Release'
         for part in parts:
             if 'Release' in part:
-                # Check if this is a complete release ID with folders
-                if part.startswith('Folder') and '-Release' in part:
-                    # Extract just the Release part
-                    release_id = part.split('-')[-1]
-                    logger.info(f"Extracted Release ID from folder-release pattern: {release_id}")
-                    return release_id
-                
-                # Check if this is just a Release ID
-                if part.startswith('Release'):
-                    logger.info(f"Found Release ID directly: {part}")
+                if '-Release' in part:
+                    # Handle the case where Release is part of a compound ID
+                    for segment in part.split('-'):
+                        if segment.startswith('Release'):
+                            logger.info(f"Found Release ID in compound part: {segment}")
+                            return segment
+                elif part.startswith('Release'):
+                    logger.info(f"Found Release ID as standalone part: {part}")
                     return part
         
-        # Fallback: use the last part of the URL, but ensure it's not 'table'
-        release_id = parts[-1]
-        if release_id == 'table':
-            # Try to find a better fallback
-            for i in range(len(parts) - 2, -1, -1):
-                if parts[i] and parts[i] != 'table' and parts[i] != 'relationships':
-                    release_id = parts[i]
-                    break
-        
-        logger.warning(f"Using fallback method for Release ID extraction: {release_id}")
-        return release_id
+        # FALLBACK: If all else fails, create a generic fallback
+        logger.warning(f"Could not extract Release ID from URL using any method: {release_url}")
+        return "table"  # This will trigger a 401 error which is better than using a wrong ID
     
     def test_connection(self):
         """Test connection to XLR API"""
