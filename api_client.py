@@ -61,7 +61,18 @@ class XLRClient(BaseAPIClient):
         """
         logger.info(f"Extracting release ID from URL: {release_url}")
         
-        # Remove anchor part if present 
+        # Special handling for complex URLs with hash fragments and relationships/table
+        if '#/' in release_url and '/relationships/table' in release_url:
+            # Match the pattern Folder-Folder-Folder-ReleaseXXX/relationships/table
+            # Extract the Release part
+            pattern = r'(Release[a-zA-Z0-9]+)'
+            match = re.search(pattern, release_url)
+            if match:
+                release_id = match.group(1)
+                logger.info(f"Extracted Release ID from complex URL: {release_id}")
+                return release_id
+        
+        # General case - remove anchor part if present 
         if '#/' in release_url:
             release_url = release_url.replace('#/', '/')
         
@@ -87,8 +98,15 @@ class XLRClient(BaseAPIClient):
                     logger.info(f"Found Release ID directly: {part}")
                     return part
         
-        # Fallback: use the last part of the URL
+        # Fallback: use the last part of the URL, but ensure it's not 'table'
         release_id = parts[-1]
+        if release_id == 'table':
+            # Try to find a better fallback
+            for i in range(len(parts) - 2, -1, -1):
+                if parts[i] and parts[i] != 'table' and parts[i] != 'relationships':
+                    release_id = parts[i]
+                    break
+        
         logger.warning(f"Using fallback method for Release ID extraction: {release_id}")
         return release_id
     
