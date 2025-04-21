@@ -49,6 +49,49 @@ class BaseAPIClient:
 class XLRClient(BaseAPIClient):
     """Client for interacting with XebiaLabs Release API"""
     
+    def extract_release_id_from_url(self, release_url):
+        """
+        Extract the release ID from a release train URL, handling relationship table URLs.
+        
+        Args:
+            release_url: URL of the release train, may include '#/releases/' and '/relationships/table'
+            
+        Returns:
+            str: The extracted release ID
+        """
+        logger.info(f"Extracting release ID from URL: {release_url}")
+        
+        # Remove anchor part if present 
+        if '#/' in release_url:
+            release_url = release_url.replace('#/', '/')
+        
+        # Remove relationships/table part if present
+        if '/relationships/table' in release_url:
+            release_url = release_url.replace('/relationships/table', '')
+        
+        # Split the URL by '/'
+        parts = release_url.split('/')
+        
+        # Look for the part that contains Release
+        for part in parts:
+            if 'Release' in part:
+                # Check if this is a complete release ID with folders
+                if part.startswith('Folder') and '-Release' in part:
+                    # Extract just the Release part
+                    release_id = part.split('-')[-1]
+                    logger.info(f"Extracted Release ID from folder-release pattern: {release_id}")
+                    return release_id
+                
+                # Check if this is just a Release ID
+                if part.startswith('Release'):
+                    logger.info(f"Found Release ID directly: {part}")
+                    return part
+        
+        # Fallback: use the last part of the URL
+        release_id = parts[-1]
+        logger.warning(f"Using fallback method for Release ID extraction: {release_id}")
+        return release_id
+    
     def test_connection(self):
         """Test connection to XLR API"""
         try:
@@ -106,8 +149,8 @@ class XLRClient(BaseAPIClient):
         result['org_name'] = None
             
         try:
-            # Extract release ID from URL
-            release_id = release_url.split('/')[-1]
+            # Extract release ID from URL using the dedicated method
+            release_id = self.extract_release_id_from_url(release_url)
             
             # Get release details with variables
             url = f"{self.base_url}/api/v1/releases/{release_id}"
@@ -175,23 +218,41 @@ class XLRClient(BaseAPIClient):
                                 except Exception as e:
                                     logger.warning(f"Error getting folder info: {str(e)}")
                 
-                # Try to get SPK from releaseName variable
-                release_name = None
+                # First try to get SPK from releaseComponents variable (highest priority)
+                release_components_var = None
                 for var in variables:
-                    if var.get('key') == 'releaseName':
-                        release_name = var.get('value')
-                        logger.info(f"Found releaseName variable: {release_name}")
+                    if var.get('key') == 'releaseComponents':
+                        release_components_var = var.get('value')
+                        logger.info(f"Found releaseComponents variable: {release_components_var}")
                         break
                 
-                if release_name:
-                    # Look for capitalized words that might be SPK names like CODECTS
-                    parts = re.split(r'[/_\-\s]', release_name)
-                    for part in parts:
-                        # Check if part is fully capitalized with at least 3 characters
-                        if part.isupper() and len(part) >= 3 and part not in ["WMTO", "DEVOPS"]:
-                            logger.info(f"Identified SPK name from releaseName: {part}")
-                            result['spk'] = part
+                if release_components_var:
+                    # The first word in release_components_var should be the SPK
+                    parts = release_components_var.split()
+                    if parts and len(parts) > 0:
+                        spk_name = parts[0].strip()
+                        if spk_name and spk_name != "SPK_PROD":
+                            logger.info(f"Using first word from releaseComponents as SPK: {spk_name}")
+                            result['spk'] = spk_name
+                
+                # Try to get SPK from releaseName variable if not found yet
+                if not result.get('spk'):
+                    release_name = None
+                    for var in variables:
+                        if var.get('key') == 'releaseName':
+                            release_name = var.get('value')
+                            logger.info(f"Found releaseName variable: {release_name}")
                             break
+                    
+                    if release_name:
+                        # Look for capitalized words that might be SPK names like CODECTS
+                        parts = re.split(r'[/_\-\s]', release_name)
+                        for part in parts:
+                            # Check if part is fully capitalized with at least 3 characters
+                            if part.isupper() and len(part) >= 3 and part not in ["WMTO", "DEVOPS"]:
+                                logger.info(f"Identified SPK name from releaseName: {part}")
+                                result['spk'] = part
+                                break
                 
                 # If we didn't get the org name from previous methods but have folder information in release data
                 if not result.get('org_name') and release_data.get('folder'):
@@ -262,8 +323,8 @@ class XLRClient(BaseAPIClient):
         then falls back to finding component groups in phases
         """
         try:
-            # Extract release ID from URL
-            release_id = release_url.split('/')[-1]
+            # Extract release ID from URL using the dedicated method
+            release_id = self.extract_release_id_from_url(release_url)
             
             # Get release details
             url = f"{self.base_url}/api/v1/releases/{release_id}"
@@ -288,22 +349,30 @@ class XLRClient(BaseAPIClient):
             
             # If we found the releaseComponents variable, parse it
             if release_components_var:
-                # Split by lines or spaces
-                component_entries = re.split(r'[\n\r\s]+', release_components_var)
+                # Split by spaces
+                component_entries = release_components_var.split()
                 
-                for entry in component_entries:
-                    entry = entry.strip()
-                    if not entry:
-                        continue
-                        
-                    # Check if this looks like a component name (not just the SPK or date)
-                    if '_' in entry and not re.match(r'\d{4}\.\d{2}\.\d{2}', entry) and entry not in components:
-                        logger.info(f"Adding component from releaseComponents: {entry}")
-                        components.append({
-                            'id': None,  # No task ID when getting from variables
-                            'name': entry,
-                            'environments': []
-                        })
+                # Skip the first entry as it should be the SPK name
+                if len(component_entries) > 1:
+                    for entry in component_entries[1:]:
+                        entry = entry.strip()
+                        if not entry or entry == "SPK_PROD":
+                            continue
+                            
+                        # Check if this component is not already added
+                        component_exists = False
+                        for comp in components:
+                            if comp['name'] == entry:
+                                component_exists = True
+                                break
+                                
+                        if not component_exists:
+                            logger.info(f"Adding component from releaseComponents: {entry}")
+                            components.append({
+                                'id': None,  # No task ID when getting from variables
+                                'name': entry,
+                                'environments': []
+                            })
             
             # If we didn't get any components from variables, fall back to the old method
             if not components:
@@ -338,8 +407,8 @@ class XLRClient(BaseAPIClient):
             global_environments = []
             
             if release_url:
-                # Extract release ID from URL
-                release_id = release_url.split('/')[-1]
+                # Extract release ID from URL using the dedicated method
+                release_id = self.extract_release_id_from_url(release_url)
                 
                 # Get release details
                 url = f"{self.base_url}/api/v1/releases/{release_id}"
